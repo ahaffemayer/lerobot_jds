@@ -1,6 +1,6 @@
 # src/features/guess_who/router.py
 import logging
-from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi import APIRouter, HTTPException, Body
 
 # Import schemas and services for this feature
 # Schema descriptions were already translated
@@ -113,12 +113,12 @@ async def http_filter_list(request_data: FilterRequest = Body(...)):
     # Translated log message
     logger.info(f"Filtering list based on Q:'{request_data.question}', A:'{request_data.answer}'")
     try:
-        kept = await filter_list(
+        kept_animals, reasoning = await filter_list(
             question=request_data.question,
             answer=request_data.answer, # Expects "yes" or "no"
             current_list=request_data.current_list
         )
-        return FilterResponse(kept_animals=kept)
+        return FilterResponse(kept_animals=kept_animals, reasoning=reasoning)
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -145,7 +145,7 @@ async def http_generate_question(request_data: GenerateQuestionRequest = Body(..
     """
     logger.info(f"Request received to generate AI question from list: {request_data.current_list}")
     try:
-        question = await generate_ai_question(current_list=request_data.current_list)
+        question = await generate_ai_question(current_list=request_data.current_list,  previous_questions=request_data.previous_questions)
         return GenerateQuestionResponse(question=question)
 
     except HTTPException as e:

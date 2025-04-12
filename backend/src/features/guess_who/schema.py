@@ -33,11 +33,13 @@ class FilterRequest(BaseModel):
 
 class FilterResponse(BaseModel):
     kept_animals: List[str]
+    reasoning: str
     error: str | None = None
 
 class GenerateQuestionRequest(BaseModel):
     """Request model for the AI to generate a question."""
     current_list: List[str] = Field(..., description="The AI's current list of possible animals for the user.")
+    previous_questions: List[str] = Field(default_factory=list, description="Questions already asked by the AI.")
 
 class GenerateQuestionResponse(BaseModel):
     """Response model for the AI's generated question."""

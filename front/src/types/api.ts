@@ -28,11 +28,13 @@ export interface FilterRequest {
 
 export interface FilterResponse {
   kept_animals: string[];
+  reasoning?: string | null; 
   error?: string | null;
 }
 
 export interface GenerateQuestionRequest {
     current_list: string[];
+    previous_questions: string[];
 }
 
 export interface GenerateQuestionResponse {

@@ -4,7 +4,8 @@ import random
 import os
 import logging
 import ast
-from typing import List
+from typing import List, Tuple
+import json
 from fastapi import HTTPException
 
 # --- Mistral Client Setup ---
@@ -174,37 +175,100 @@ Answer only and literally with "yes" or "no", without any other punctuation or s
         raise HTTPException(status_code=500, detail="Failed to get answer from LLM.")
 
 # Optional: Service function for filtering (if you add the route)
-async def filter_list(question: str, answer: str, current_list: List[str]) -> List[str]:
-    """Uses the LLM to filter the list based on the question and answer."""
-    # Translated filter_prompt
+async def filter_list(question: str, answer: str, current_list: List[str]) -> Tuple[List[str], str]:
+    """
+    Uses the LLM to filter the list based on the question and answer,
+    expecting a JSON response.
+    """
+    # Updated filter_prompt asking for JSON
     filter_prompt = f"""
-Here is a question asked in the game "Guess Who?": {question}
-The answer given was: {answer} # Expects "yes" or "no" now
-The current list of possible characters is: {current_list}
-Based solely on the question and the answer, which characters from the current list should be kept?
-Respond only with the Python list of the names of the characters to keep. For example: ['Chat', 'Chien', 'Lion']
-"""
+You are playing the game "Guess Who?". Your opponent asked: "{question}"
+The answer was: "{answer}" (only "yes" or "no").
+Here is the list of possible characters remaining: {current_list}
+
+Based ONLY on the question and the answer, determine the updated list of characters to keep and provide a brief explanation for the removals.
+
+Respond ONLY with a valid JSON object containing two keys:
+1.  `kept_characters`: A JSON array (list) of strings representing the characters to keep.
+2.  `reasoning`: A single string explaining briefly why the other characters were removed.
+
+Do not include any text before or after the JSON object.
+
+Example JSON Response:
+```json
+{{
+  "kept_characters": ["A","B", "C"],
+  "reasoning": ""
+}}
+```
+    """
     try:
         raw_response = await _llm_query(filter_prompt)
-        kept_animals = _extract_list(raw_response)
+        print(f"##########{raw_response}######")  # Debugging line to see the raw response
+        # Attempt to parse the JSON response
+        try:
+            # Find the JSON part in case the LLM still adds extra text (optional robustness)
+            # More robust: Find the first '{' and last '}'
+            json_start = raw_response.find('{')
+            json_end = raw_response.rfind('}')
+            if json_start != -1 and json_end != -1 and json_end > json_start:
+                json_str = raw_response[json_start:json_end+1]
+            else:
+                # Assume the whole response should be JSON if markers aren't clear
+                json_str = raw_response.strip()
+
+            parsed_json = json.loads(json_str)
+
+            # Extract data, providing defaults if keys are missing
+            kept_animals = parsed_json.get('kept_characters', [])
+            reasoning = parsed_json.get('reasoning', 'No reasoning provided in JSON.')
+
+            # Validate extracted data types (optional but recommended)
+            if not isinstance(kept_animals, list) or not all(isinstance(item, str) for item in kept_animals):
+                raise ValueError("'kept_characters' should be a list of strings.")
+            if not isinstance(reasoning, str):
+                raise ValueError("'reasoning' should be a string.")
+
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse LLM response as JSON. Raw: '{raw_response}'")
+            # Translated detail message
+            raise HTTPException(status_code=500, detail="LLM response was not valid JSON.")
+        except ValueError as ve: # Catch type validation errors
+            logger.error(f"Invalid JSON structure or types from LLM: {ve}. Raw: '{raw_response}'")
+            # Translated detail message
+            raise HTTPException(status_code=500, detail=f"LLM response JSON structure/type error: {ve}")
+        except Exception as e: # Catch unexpected parsing issues
+            logger.exception(f"Error processing LLM JSON response: {e}. Raw: '{raw_response}'")
+            # Translated detail message
+            raise HTTPException(status_code=500, detail="Failed to process LLM JSON response.")
+
+
         # Basic validation: Ensure kept animals are a subset of the original list
         valid_kept_animals = [animal for animal in kept_animals if animal in current_list]
+
         if len(valid_kept_animals) != len(kept_animals):
+            invalid_suggestions = [animal for animal in kept_animals if animal not in current_list]
             # Translated log message
-            logger.warning(f"LLM filter suggested animals not in the original list. Raw: '{raw_response}', Original: {current_list}, Kept: {valid_kept_animals}")
+            logger.warning(f"LLM filter suggested animals not in the original list ({invalid_suggestions}). Raw JSON: '{json_str}', Original: {current_list}, Kept valid: {valid_kept_animals}")
+            # Note: We only keep the valid ones, correcting the LLM's mistake silently for the user.
+
+        removed_animals = [animal for animal in current_list if animal not in valid_kept_animals]
         # Translated log message
-        logger.info(f"Filtered list based on Q:'{question}', A:'{answer}'. Kept: {valid_kept_animals}")
-        return valid_kept_animals
+        logger.info(f"Filtered list based on Q:'{question}', A:'{answer}'. Kept: {valid_kept_animals}. Reasoning: '{reasoning}'")
+
+        return valid_kept_animals, reasoning
+
     except HTTPException as e:
+        # Re-raise HTTPExceptions directly
         raise e
     except Exception as e:
         # Translated log message
-        logger.exception(f"Unexpected error in filter_list: {e}")
+        logger.exception(f"Unexpected error in filter_list during LLM call or processing: {e}")
         # Translated detail message
         raise HTTPException(status_code=500, detail="Failed to filter list using LLM.")
-    
+        
 
-async def generate_ai_question(current_list: List[str]) -> str:
+async def generate_ai_question(current_list: List[str], previous_questions: List[str]) -> str:
     """
     Uses the LLM to generate a discriminating question based on the current list of possible animals.
     """
@@ -222,19 +286,29 @@ async def generate_ai_question(current_list: List[str]) -> str:
          logger.info(f"Generating question for single remaining animal: {current_list[0]}")
 
 
-    # Translated prompt
+    previous_block = (
+        f"You have already asked these questions: {previous_questions}.\n"
+        "Avoid repeating them exactly.\n"
+        if previous_questions else ""
+    )
+
     prompt = f"""
     You are playing the game "Guess Who?". You need to guess your opponent's secret animal.
-    Your current list of possible animals for the opponent is: {current_list}
+    Your current list of possible animals for the opponent is: {current_list}.
+    {previous_block}
     Generate a single, effective yes/no question that will help you eliminate the most possibilities from this list.
-    Focus on common distinguishing features (e.g., 'Is it a mammal?', 'Does it live in water?', 'Does it have fur?', 'Can it fly?'). Avoid questions specific to only one animal unless few options remain.
+    Focus on common distinguishing features (e.g., 'Is it a mammal?', 'Does it live in water?', 'Does it have fur?', 'Can it fly?').
+    Avoid questions that have already been asked or that are specific to only one animal unless few options remain.
     Respond ONLY with the question itself, and nothing else.
     """
     try:
         # Use the existing LLM query helper
         generated_question = await _llm_query(prompt)
+
         # Basic cleaning (remove potential quotes or extra phrases if LLM doesn't follow instructions perfectly)
         cleaned_question = generated_question.strip().strip('"')
+        logger.info(f"\n\n\n{prompt}\n\n\n")
+
         logger.info(f"Generated AI question for list {current_list}: '{cleaned_question}' (Raw: '{generated_question}')")
         return cleaned_question
     except HTTPException as e:

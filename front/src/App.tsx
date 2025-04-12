@@ -54,6 +54,8 @@ enum GamePhase {
 function App() {
   // --- Existing Hooks ---
   const [glassesStyle, setGlassesStyle] = useState<GlassesStyle>("neutral");
+  const [aiQuestionHistory, setAiQuestionHistory] = useState<string[]>([]);
+
   const {
     pupilState,
     eyeOffsetX,
@@ -102,6 +104,7 @@ function App() {
   const isRecordingRef = useRef(isRecording);
   const isTalkingContinuouslyRef = useRef(isTalkingContinuously);
   const reactionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const transitionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Ref to store the finalized transcription *after* recording stops
   const finalTranscriptionRef = useRef<string | null>(null);
 
@@ -119,6 +122,11 @@ function App() {
       if (reactionTimeoutRef.current) {
         console.log("Cleanup: Clearing reaction timeout.");
         clearTimeout(reactionTimeoutRef.current);
+      }
+
+      if (transitionTimeoutRef.current) {
+        console.log("Cleanup: Clearing transition timeout.");
+        clearTimeout(transitionTimeoutRef.current);
       }
     };
   }, []);
@@ -157,6 +165,10 @@ function App() {
           //setMessageToSpeak(""); // NO! This causes re-renders. Let the game logic clear it if needed.
         };
         utterance.onerror = (event) => {
+          if (event.error === "interrupted") {
+            console.warn("TTS: Utterance interrupted, likely expected.");
+            return; // Ne change pas l'état du jeu ni l'affichage
+          }
           console.error("App TTS: SpeechSynthesisUtterance Error:", event);
           stopMouthIfNeeded();
           setErrorMessage("Text-to-speech error.");
@@ -335,16 +347,24 @@ function App() {
       console.log("Game Phase: AI_ANSWERING");
       const answer = lastAiAnswer;
       setLastAiAnswer(null); // Consume the answer
-
+  
       setDisplayMessage(`AI answers: "${answer}"`);
       setMessageToSpeak(answer); // Speak "yes" or "no"
-
-      // Transition to AI's turn after speaking
-      // We need to wait for speech to potentially finish, or just transition quickly.
-      // For simplicity, transition immediately after starting speech.
-      setGamePhase(GamePhase.AI_TURN_ASK);
+  
+      // 👇 Supprime cette ligne (c'est elle qui fait la transition trop tôt)
+      // setGamePhase(GamePhase.AI_TURN_ASK);
+  
+      if (transitionTimeoutRef.current) {
+        clearTimeout(transitionTimeoutRef.current);
+      }
+  
+      transitionTimeoutRef.current = setTimeout(() => {
+        console.log("Effect 4: 2-second timeout finished. Transitioning to AI_TURN_ASK.");
+        setGamePhase(GamePhase.AI_TURN_ASK);
+        transitionTimeoutRef.current = null;
+      }, 2000);
     }
-  }, [gamePhase, lastAiAnswer, lastUserQuestion]); // Runs when AI_ANSWERING and answer is ready
+  }, [gamePhase, lastAiAnswer]);
 
   // Effect 5: AI Generates Question (AI_Turn_Ask -> AI_Generating_Question -> AI_Speaking_Question)
   useEffect(() => {
@@ -375,6 +395,7 @@ function App() {
         try {
           const response = await apiGenerateQuestion({
             current_list: aiPossibleAnimals,
+            previous_questions: aiQuestionHistory,
           });
           if (response.error || !response.question) {
             throw new Error(
@@ -405,6 +426,7 @@ function App() {
       console.log("Game Phase: AI_SPEAKING_QUESTION");
       const question = lastAiQuestion;
       // Don't consume lastAiQuestion here, need it for filtering later
+      setAiQuestionHistory((prev) => [...prev, question]);
 
       const fullMessage = `AI asks: ${question}\nAnswer 'yes' or 'no'. Hold Space to speak.`;
       setDisplayMessage(fullMessage);
@@ -433,6 +455,7 @@ function App() {
         console.log("User answer was empty or silent.");
         const retryMsg = `I didn't hear your answer to: "${lastAiQuestion}". Please say 'yes' or 'no'. Hold Space.`;
         setDisplayMessage(retryMsg);
+        console.log(`%c[DEBUG] setMessageToSpeak appelé avec: "${retryMsg}" depuis [Effect 7 - Réponse Invalide]`, 'color: orange; font-weight: bold;');
         setMessageToSpeak(retryMsg);
         setGamePhase(GamePhase.USER_TURN_ANSWER); // Go back to let user answer again
         return;
@@ -536,15 +559,20 @@ function App() {
           }
 
           const kept = response.kept_animals;
+          const reasoning = response.reasoning; 
           console.log("AI filtered list, kept:", kept);
           setAiPossibleAnimals(kept); // Update AI's possibilities
 
           // Consume question after successful filter
           setLastAiQuestion(null);
 
+          const reasoningOrFallback = reasoning || "Okay, I've updated my list based on your answer.";
+
           // Check game state after filtering
           if (kept.length === 1) {
             // AI thinks it knows!
+            setDisplayMessage(`${reasoningOrFallback}\nNow I think I know...`); // Show reasoning on screen
+            setMessageToSpeak(reasoningOrFallback);
             setGamePhase(GamePhase.AI_MAKING_GUESS);
           } else if (kept.length === 0) {
             // AI has no possibilities left - opponent likely made a mistake or LLM failed
@@ -559,9 +587,9 @@ function App() {
             setGamePhase(GamePhase.ERROR);
           } else {
             // Game continues, user's turn
-            const nextTurnMsg = "Okay, got it. Your turn to ask.";
+            const nextTurnMsg = `${reasoningOrFallback} Your turn to ask. Hold Space to speak.`;
             setDisplayMessage(nextTurnMsg);
-            setMessageToSpeak(nextTurnMsg);
+            setMessageToSpeak(nextTurnMsg); // Speak the combined message
             setGamePhase(GamePhase.USER_TURN_ASK);
           }
         } catch (error) {
@@ -755,6 +783,7 @@ function App() {
                 setMessageToSpeak("");
                 setDisplayMessage("Loading game...");
                 setErrorMessage(null);
+                setAiQuestionHistory([]);
                 finalTranscriptionRef.current = null;
                 // Reset visual elements maybe?
                 setGlassesStyle("neutral");

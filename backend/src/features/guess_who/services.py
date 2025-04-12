@@ -1,4 +1,5 @@
 # src/features/guess_who/services.py
+from typing import Tuple, List
 import asyncio
 import random
 import os
@@ -174,33 +175,59 @@ Answer only and literally with "yes" or "no", without any other punctuation or s
         raise HTTPException(status_code=500, detail="Failed to get answer from LLM.")
 
 # Optional: Service function for filtering (if you add the route)
-async def filter_list(question: str, answer: str, current_list: List[str]) -> List[str]:
-    """Uses the LLM to filter the list based on the question and answer."""
-    # Translated filter_prompt
+
+
+async def filter_list(
+    question: str,
+    answer: str,
+    current_list: List[str]
+) -> Tuple[List[str], List[str], str]:
+    """
+    Uses the LLM to filter the list based on the question and answer.
+    Returns the animals to keep, the ones removed, and a short explanation.
+    """
     filter_prompt = f"""
-Here is a question asked in the game "Guess Who?": {question}
-The answer given was: {answer} # Expects "yes" or "no" now
-The current list of possible characters is: {current_list}
-Based solely on the question and the answer, which characters from the current list should be kept?
-Respond only with the Python list of the names of the characters to keep. For example: ['Chat', 'Chien', 'Lion']
+You are playing the game "Guess Who?". Your opponent asked: "{question}"
+The answer was: "{answer}" (only "yes" or "no").
+Here is the list of possible characters remaining: {current_list}
+
+Step 1: Based ONLY on the question and the answer, return the updated list of characters to keep.
+Respond ONLY with a valid Python list, for example: ['Chat', 'Chien', 'Lion']
+
+Step 2: On the next line, write ONE short sentence explaining why the other characters were removed.
+Example: "I removed the animals that do not live in water."
 """
+
     try:
         raw_response = await _llm_query(filter_prompt)
+
+        # Extract the list from the first line
         kept_animals = _extract_list(raw_response)
-        # Basic validation: Ensure kept animals are a subset of the original list
+
+        # Extract reasoning from the second line or fallback
+        reasoning_lines = raw_response.splitlines()
+        reasoning = next(
+            (line.strip() for line in reasoning_lines if not line.strip().startswith("[") and line.strip()),
+            "No explanation provided by the LLM."
+        )
+
+        # Validate kept animals
         valid_kept_animals = [animal for animal in kept_animals if animal in current_list]
+
         if len(valid_kept_animals) != len(kept_animals):
-            # Translated log message
-            logger.warning(f"LLM filter suggested animals not in the original list. Raw: '{raw_response}', Original: {current_list}, Kept: {valid_kept_animals}")
-        # Translated log message
-        logger.info(f"Filtered list based on Q:'{question}', A:'{answer}'. Kept: {valid_kept_animals}")
-        return valid_kept_animals
-    except HTTPException as e:
-        raise e
+            logger.warning(
+                f"Some animals in the LLM response are invalid: {set(kept_animals) - set(valid_kept_animals)}"
+            )
+
+        removed_animals = [animal for animal in current_list if animal not in valid_kept_animals]
+
+        logger.info(f"Filtered Q:'{question}', A:'{answer}'. Kept: {valid_kept_animals}, Removed: {removed_animals}, Reason: {reasoning}")
+        return valid_kept_animals, removed_animals, reasoning
+
+    except HTTPException:
+        raise
     except Exception as e:
-        # Translated log message
-        logger.exception(f"Unexpected error in filter_list: {e}")
-        # Translated detail message
+        logger.exception("Unexpected error in filter_list")
         raise HTTPException(status_code=500, detail="Failed to filter list using LLM.")
     
 

@@ -1,0 +1,22 @@
+version: '3.8'
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - WATCHFILES_FORCE_POLLING=true
+    volumes:
+      - ./backend:/app
+    networks:
+      - app-network
+    restart: always
+
+volumes:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge

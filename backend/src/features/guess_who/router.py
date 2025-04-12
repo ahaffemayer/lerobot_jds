@@ -4,9 +4,9 @@ from fastapi import APIRouter, HTTPException, Depends, Body
 
 # Import schemas and services for this feature
 # Schema descriptions were already translated
-from .schema import AnimalListResponse, AskRequest, AskResponse, FilterRequest, FilterResponse, SelectAnimalResponse
+from .schema import AnimalListResponse, AskRequest, AskResponse, FilterRequest, FilterResponse, GenerateQuestionRequest, GenerateQuestionResponse, SelectAnimalResponse
 # Service function names remain the same
-from .services import ALL_CHARACTERS, filter_list, select_random_animal, answer_question #, filter_list (if added)
+from .services import ALL_CHARACTERS, filter_list, generate_ai_question, select_random_animal, answer_question #, filter_list (if added)
 
 logger = logging.getLogger(__name__)
 
@@ -129,4 +129,32 @@ async def http_filter_list(request_data: FilterRequest = Body(...)):
         return FilterResponse(
             kept_animals=[],
             error=f"An unexpected server error occurred during filtering: {type(e).__name__}"
+        )
+    
+
+@router.post(
+    "/generate_question",
+    response_model=GenerateQuestionResponse,
+    summary="Generate AI Question",
+    description="Generates a yes/no question for the AI to ask based on its current list of possibilities.",
+)
+async def http_generate_question(request_data: GenerateQuestionRequest = Body(...)):
+    """
+    Endpoint for the AI to generate its next question.
+    Requires the AI's current list of possible user animals.
+    """
+    logger.info(f"Request received to generate AI question from list: {request_data.current_list}")
+    try:
+        question = await generate_ai_question(current_list=request_data.current_list)
+        return GenerateQuestionResponse(question=question)
+
+    except HTTPException as e:
+        # Re-raise HTTP exceptions (like 400 for empty list, 50x for LLM issues)
+        raise e
+    except Exception as e:
+        logger.exception("Unexpected error during AI question generation.")
+        # Return a structured error using the schema
+        return GenerateQuestionResponse(
+            question="",
+            error=f"An unexpected server error occurred during question generation: {type(e).__name__}"
         )

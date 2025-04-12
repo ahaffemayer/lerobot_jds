@@ -202,3 +202,44 @@ Respond only with the Python list of the names of the characters to keep. For ex
         logger.exception(f"Unexpected error in filter_list: {e}")
         # Translated detail message
         raise HTTPException(status_code=500, detail="Failed to filter list using LLM.")
+    
+
+async def generate_ai_question(current_list: List[str]) -> str:
+    """
+    Uses the LLM to generate a discriminating question based on the current list of possible animals.
+    """
+    if not current_list:
+        logger.warning("AI asked to generate question for an empty list.")
+        # Handle this case - maybe raise an error or return a default message
+        # Depending on game logic, this might indicate the AI should guess or an error occurred.
+        raise HTTPException(status_code=400, detail="Cannot generate question from an empty list.")
+
+    if len(current_list) == 1:
+         # If only one animal left, AI should guess, not ask.
+         # This logic might be better handled in the frontend, but we can prevent unnecessary LLM calls.
+         # Or return a specific message indicating a guess is needed.
+         # For now, let's still generate a question, though it might be trivial.
+         logger.info(f"Generating question for single remaining animal: {current_list[0]}")
+
+
+    # Translated prompt
+    prompt = f"""
+    You are playing the game "Guess Who?". You need to guess your opponent's secret animal.
+    Your current list of possible animals for the opponent is: {current_list}
+    Generate a single, effective yes/no question that will help you eliminate the most possibilities from this list.
+    Focus on common distinguishing features (e.g., 'Is it a mammal?', 'Does it live in water?', 'Does it have fur?', 'Can it fly?'). Avoid questions specific to only one animal unless few options remain.
+    Respond ONLY with the question itself, and nothing else.
+    """
+    try:
+        # Use the existing LLM query helper
+        generated_question = await _llm_query(prompt)
+        # Basic cleaning (remove potential quotes or extra phrases if LLM doesn't follow instructions perfectly)
+        cleaned_question = generated_question.strip().strip('"')
+        logger.info(f"Generated AI question for list {current_list}: '{cleaned_question}' (Raw: '{generated_question}')")
+        return cleaned_question
+    except HTTPException as e:
+        # Propagate HTTP exceptions from _llm_query
+        raise e
+    except Exception as e:
+        logger.exception(f"Unexpected error generating AI question for list {current_list}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate question via LLM.")

@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 *$py.class
+front/package-lock.json
+front/yarn.lock
+checkpoints
 
 # C extensions
 *.so

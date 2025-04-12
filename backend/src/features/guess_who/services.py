@@ -297,7 +297,7 @@ async def generate_ai_question(current_list: List[str], previous_questions: List
     Your current list of possible animals for the opponent is: {current_list}.
     {previous_block}
     Generate a single, effective yes/no question that will help you eliminate the most possibilities from this list.
-    Focus on common distinguishing features (e.g., 'Is it a mammal?', 'Does it live in water?', 'Does it have fur?', 'Can it fly?').
+    Focus on common distinguishing features.
     Avoid questions that have already been asked or that are specific to only one animal unless few options remain.
     Respond ONLY with the question itself, and nothing else.
     """

@@ -60,9 +60,6 @@ def record(
     cfg: RecordControlConfig,
     row_col: tuple[int, int] = None,
 ) -> LeRobotDataset:
-    if os.path.exists(cfg.repo_id):
-        # remove the dataset if it exists
-        os.remove("/home/achapin/.cache/huggingface/lerobot/lirislab/" + cfg.repo_id)
     # Create empty dataset or load existing saved episodes
     sanity_check_dataset_name(cfg.repo_id, cfg.policy)
     dataset = LeRobotDataset.create(
@@ -101,12 +98,7 @@ def record(
         if recorded_episodes >= cfg.num_episodes:
             break
         
-        # TODO : extract from LLM JSON
-        current_grid = torch.tensor([1., 6.], dtype=torch.float)
-        # if cfg.collect_grid:
-        #     current_row = recorded_episodes // NUM_COLS
-        #     current_col = recorded_episodes % NUM_COLS
-        #     current_grid = torch.tensor([current_row, current_col])
+        current_grid = torch.tensor(row_col, dtype=torch.float)
 
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
         if not robot.is_connected:
@@ -228,18 +220,20 @@ def _init_rerun(control_config: ControlConfig, session_name: str = "lerobot_cont
             rr.spawn(memory_limit=memory_limit)
 
 @parser.wrap()
-def control_robot(cfg: ControlPipelineConfig):
+def control_robot(
+    cfg: ControlPipelineConfig,
+    row_col: tuple[int, int] = None,
+):
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
     robot = make_robot_from_config(cfg.robot)
     _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_record")
-    record(robot, cfg.control)
+    record(robot, cfg.control, row_col=row_col)
 
     if robot.is_connected:
         robot.disconnect()
 
-# TODO 
 def robot_move_grid(row: int, col: int):
     """
     Moves the robot to a specific grid position.
@@ -249,8 +243,7 @@ def robot_move_grid(row: int, col: int):
         col (int): The column index of the grid.
     """
     # Code to move the robot to the specified grid position
-    pass
+    control_robot(row_col=[row, col])
 
 if __name__ == "__main__":
-    control_robot()
-    # robot_move_grid(2, 3)
+    control_robot(row_col=[1, 4])

@@ -32,14 +32,17 @@ class GuessWho:
         # Choose a random animal
         if self.ai_player:
             self.chosen_animal = self.choose_animal()
+            print(f"I have chosen {self.chosen_animal}")
 
 
         # Deciding who start with "coin flip"
         coing_flip = np.random.random(1)
         if coing_flip > 0.5:
             self.your_turn = False
+            print("It is your turn")
         else:
             self.your_turn = True
+            print("It is my turn")
 
         # Announce who is starting
 
@@ -85,6 +88,9 @@ class GuessWho:
 
     def update_board(self, animals):
         """Given the list of animals to conceal, performs the actions with lerobot"""
+        for animal in animals:
+            print(f"I am removing {animal}")
+            
 
         
     def listen(self):

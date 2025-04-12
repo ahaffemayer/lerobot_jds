@@ -58,6 +58,7 @@ def teleoperate(robot: Robot, cfg: TeleoperateControlConfig):
 def record(
     robot: Robot,
     cfg: RecordControlConfig,
+    row_col: tuple[int, int] = None,
 ) -> LeRobotDataset:
     if os.path.exists(cfg.repo_id):
         # remove the dataset if it exists
@@ -101,7 +102,7 @@ def record(
             break
         
         # TODO : extract from LLM JSON
-        current_grid = torch.tensor([0., 3.], dtype=torch.float)
+        current_grid = torch.tensor([1., 6.], dtype=torch.float)
         # if cfg.collect_grid:
         #     current_row = recorded_episodes // NUM_COLS
         #     current_col = recorded_episodes % NUM_COLS

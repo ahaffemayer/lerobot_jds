@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 checkpoints/*
+front/node_modules
 
 # C extensions
 *.so

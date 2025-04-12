@@ -20,7 +20,7 @@ export PYTHONPATH=.
 export HYDRA_FULL_ERROR=1
 
 srun python lerobot/scripts/train.py \
-    --dataset.repo_id="[lirislab/whoso100]" \
+    --dataset.repo_id="lirislab/whoso100" \
     --policy.type=act \
     --output_dir="/home/achapin/lerobot_jds/outputs/train/guess_who_test" \
     --job_name=guess_who_test  \

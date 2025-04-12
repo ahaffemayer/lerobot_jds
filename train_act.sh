@@ -29,4 +29,5 @@ srun python lerobot/scripts/train.py \
     --num_workers=8 \
     --wandb.enable=true \
     --wandb.project="MistralHack" \
-    --steps 50000
+    --steps=50000 \
+    --save_freq=10000

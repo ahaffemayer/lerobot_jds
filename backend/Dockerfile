@@ -18,10 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy requirements.txt for caching purposes
 COPY requirements.txt .
+COPY lerobot /data/lerobot
 
 # Upgrade pip and install Python dependencies
 # Notice that we install faster-whisper instead of whispercpp
 RUN python3 -m pip install --no-cache-dir --upgrade pip && \
+    python3 -m pip install --no-cache-dir -e /data/lerobot && \
     python3 -m pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     python3 -m pip install --no-cache-dir -r requirements.txt
 

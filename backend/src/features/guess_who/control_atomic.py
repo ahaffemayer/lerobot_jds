@@ -3,7 +3,9 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
-
+import numpy as np
+import random
+import shutil
 import rerun as rr
 
 # from safetensors.torch import load_file, save_file
@@ -86,7 +88,16 @@ def record(
 
     if not robot.is_connected:
         robot.connect()
+
+    # Interpolate between current position and goal position 
+    # observation = robot.capture_observation()
+    # print(observation)
+    # current_position = observation["observation.state"].cpu().numpy()
+    # robot.send_action(torch.tensor([current_position[0], 135, 135, 4, -90, 3]))
+    # time.sleep(0.5)
     # robot.send_action(torch.tensor([0, 135, 135, 4, -90, 3]))
+
+    listener, events = init_keyboard_listener()
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,

@@ -1,3 +1,4 @@
-[submodule "lerobot"]
-	path = ./backend/lerobot
-	url = https://github.com/alexcbb/lerobot
+# Supprimez ces lignes :
+# [submodule "lerobot"]
+#     path = ./backend/lerobot
+#     url = https://github.com/alexcbb/lerobot

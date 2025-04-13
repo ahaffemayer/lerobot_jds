@@ -224,14 +224,6 @@ Example JSON Response:
             kept_animals = parsed_json.get('kept_characters', [])
             reasoning = parsed_json.get('reasoning', 'No reasoning provided in JSON.')
 
-            for animal in kept_animals:
-                print(f"Kept animal: {animal}")  # Debugging line to see kept animals
-                if animal in ANIMAL_COORDS.keys():
-                    print(f"Animal {animal} found in ANIMAL_COORDS.")
-                    coord = ANIMAL_COORDS[animal]
-                    print(f"Coordinates for {animal}: {coord}")
-                    robot_move_grid(coord[0], coord[1])  # Assuming robot_move_grid is defined elsewhere
-
 
             # Validate extracted data types (optional but recommended)
             if not isinstance(kept_animals, list) or not all(isinstance(item, str) for item in kept_animals):
@@ -263,6 +255,13 @@ Example JSON Response:
             # Note: We only keep the valid ones, correcting the LLM's mistake silently for the user.
 
         removed_animals = [animal for animal in current_list if animal not in valid_kept_animals]
+        for animal in removed_animals:
+            print(f"Kept animal: {animal}")  # Debugging line to see kept animals
+            if animal in ANIMAL_COORDS.keys():
+                print(f"Animal {animal} found in ANIMAL_COORDS.")
+                coord = ANIMAL_COORDS[animal]
+                print(f"Coordinates for {animal}: {coord}")
+                robot_move_grid(coord[0], coord[1])  # Assuming robot_move_grid is defined elsewhere
         # Translated log message
         logger.info(f"Filtered list based on Q:'{question}', A:'{answer}'. Kept: {valid_kept_animals}. Reasoning: '{reasoning}'")
 

@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 # --- Mistral Client Setup ---
 # Make sure to install the library: pip install mistralai
-from control_atomic import robot_move_grid
+from .control_atomic import robot_move_grid
 from mistralai import Mistral
 
 logger = logging.getLogger(__name__)

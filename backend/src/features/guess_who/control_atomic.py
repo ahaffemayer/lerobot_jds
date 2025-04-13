@@ -3,7 +3,9 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
-
+import numpy as np
+import random
+import shutil
 import rerun as rr
 
 # from safetensors.torch import load_file, save_file
@@ -96,13 +98,23 @@ def record(
 
     if not robot.is_connected:
         robot.connect()
-    robot.send_action(torch.tensor([0, 135, 135, 4, -90, 3]))
+
+    # Interpolate between current position and goal position 
+    # observation = robot.capture_observation()
+    # print(observation)
+    # current_position = observation["observation.state"].cpu().numpy()
+    # robot.send_action(torch.tensor([current_position[0], 135, 135, 4, -90, 3]))
+    # time.sleep(0.5)
+    # robot.send_action(torch.tensor([0, 135, 135, 4, -90, 3]))
+
+    listener, events = init_keyboard_listener()
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
+    cfg.warmup_time_s = 2
     warmup_record(robot, events, enable_teleoperation, cfg.warmup_time_s, cfg.display_data, cfg.fps)
 
     if has_method(robot, "teleop_safety_stop"):
@@ -217,7 +229,7 @@ def control_robot(
         robot=So100RobotConfig(
             leader_arms={
                 'main': FeetechMotorsBusConfig(
-                    port='/dev/ttyACM0',
+                    port='/dev/ttyACM1',
                     motors={
                         'shoulder_pan': [1, 'sts3215'],
                         'shoulder_lift': [2, 'sts3215'],
@@ -231,7 +243,7 @@ def control_robot(
             },
             follower_arms={
                 'main': FeetechMotorsBusConfig(
-                    port='/dev/ttyACM1',
+                    port='/dev/ttyACM0',
                     motors={
                         'shoulder_pan': [1, 'sts3215'],
                         'shoulder_lift': [2, 'sts3215'],
@@ -261,7 +273,7 @@ def control_robot(
             calibration_dir='/home/achapin/hackathon/lerobot_jds/backend/lerobot/.cache/calibration/so100'
         ), 
         control=RecordControlConfig(
-            repo_id='lirislab/eval_act_guess_who_33',
+            repo_id='lirislab/eval_act_guess_who_FULL',
             single_task='',
             collect_grid=True,
             root=None,
@@ -303,12 +315,12 @@ def control_robot(
                 optimizer_lr=1e-05,
                 optimizer_weight_decay=0.0001,
                 optimizer_lr_backbone=1e-05,
-                pretrained_path='/home/achapin/hackathon/lerobot_jds/backend/src/features/guess_who/checkpoints/050000_full/pretrained_model'
+                pretrained_path='/home/achapin/hackathon/lerobot_jds/backend/src/features/guess_who/checkpoints/100000_full_light/pretrained_model'
             ),
             fps=30,
-            warmup_time_s=5,
-            episode_time_s=30,
-            reset_time_s=10,
+            warmup_time_s=0,
+            episode_time_s=20,
+            reset_time_s=2,
             num_episodes=1,
             video=True,
             push_to_hub=False,
@@ -343,4 +355,9 @@ def robot_move_grid(row: int, col: int):
     control_robot(row_col=[row, col])
 
 if __name__ == "__main__":
-    control_robot(row_col=[1, 4])
+    # shutil.rmtree('/home/achapin/.cache/huggingface/lerobot/lirislab/eval_act_guess_who_FULL')
+    for (i, j) in [(0, 4),  (0, 6), (0, 7),
+                            (1, 3), (1, 4),  (1, 7),
+                            (2, 0),  (2, 4), (2, 5), (2, 6)]:
+            control_robot(row_col=[i, j])
+            shutil.rmtree('/home/achapin/.cache/huggingface/lerobot/lirislab/eval_act_guess_who_FULL')

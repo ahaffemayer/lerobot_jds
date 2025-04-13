@@ -91,7 +91,6 @@ def record(
     )
 
     # Load pretrained policy
-    print(f"cfg policy: {cfg.policy}")
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
     if not robot.is_connected:
@@ -103,104 +102,44 @@ def record(
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
-    warmup_record(robot, events, enable_teleoperation, cfg.warmup_time_s, cfg.display_data, cfg.fps)
+    warmup_record(robot, None, enable_teleoperation, cfg.warmup_time_s, cfg.display_data, cfg.fps)
 
-    if has_method(robot, "teleop_safety_stop"):
-        robot.teleop_safety_stop()
-
-    recorded_episodes = 0
     control_time_s = cfg.episode_time_s
-    while True:
-        if recorded_episodes >= cfg.num_episodes:
-            break
+    #while True:
+    current_grid = torch.tensor(row_col, dtype=torch.float)
+    if not robot.is_connected:
+        robot.connect()
+
+    if control_time_s is None:
+        control_time_s = float("inf")
+
+    if dataset is not None and cfg.fps is not None and dataset.fps != cfg.fps:
+        raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {cfg.fps}).")
+    
+    timestamp = 0
+    start_episode_t = time.perf_counter()
+    while timestamp < control_time_s:
+        start_loop_t = time.perf_counter()
         
-        current_grid = torch.tensor(row_col, dtype=torch.float)
+        observation = robot.capture_observation()
+        observation["grid_position"] = current_grid
+        if policy is not None:
+            pred_action = predict_action(
+                observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+            )
+            # Action can eventually be clipped using `max_relative_target`,
+            # so action actually sent is saved in the dataset.
+            action = robot.send_action(pred_action)
+            action = {"action": action}
 
-        log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-        if not robot.is_connected:
-            robot.connect()
-
-        if events is None:
-            events = {"exit_early": False}
-
-        if control_time_s is None:
-            control_time_s = float("inf")
-
-        if dataset is not None and cfg.single_task is None:
-            raise ValueError("You need to provide a task as argument in `single_task`.")
-
-        if dataset is not None and cfg.fps is not None and dataset.fps != cfg.fps:
-            raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {cfg.fps}).")
-        
-        timestamp = 0
-        start_episode_t = time.perf_counter()
-        while timestamp < control_time_s:
-            start_loop_t = time.perf_counter()
-            
-            observation = robot.capture_observation()
-            observation["grid_position"] = current_grid
-
-            if policy is not None:
-                pred_action = predict_action(
-                    observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
-                )
-                # Action can eventually be clipped using `max_relative_target`,
-                # so action actually sent is saved in the dataset.
-                action = robot.send_action(pred_action)
-                action = {"action": action}
-
-            if dataset is not None:
-                frame = {**observation, **action, "task": cfg.single_task, "grid_position": current_grid}
-                dataset.add_frame(frame)
-
-            if (cfg.display_data and not is_headless()):
-                for k, v in action.items():
-                    for i, vv in enumerate(v):
-                        rr.log(f"sent_{k}_{i}", rr.Scalar(vv.numpy()))
-
-                image_keys = [key for key in observation if "image" in key]
-                for key in image_keys:
-                    rr.log(key, rr.Image(observation[key].numpy()), static=True)
-
-            if cfg.fps is not None:
-                dt_s = time.perf_counter() - start_loop_t
-                busy_wait(1 / cfg.fps - dt_s)
-
+        if cfg.fps is not None:
             dt_s = time.perf_counter() - start_loop_t
-            log_control_info(robot, dt_s, fps=cfg.fps)
+            busy_wait(1 / cfg.fps - dt_s)
 
-            timestamp = time.perf_counter() - start_episode_t
-            if events["exit_early"]:
-                events["exit_early"] = False
-                break
+        dt_s = time.perf_counter() - start_loop_t
+        timestamp = time.perf_counter() - start_episode_t
+    print("Finished recording trajectory")
 
-        if not events["stop_recording"] and (
-            (recorded_episodes < cfg.num_episodes - 1) or events["rerecord_episode"]
-        ):
-            log_say("Reset the environment", cfg.play_sounds)
-            reset_environment(robot, events, cfg.reset_time_s, cfg.fps)
-
-        if events["rerecord_episode"]:
-            log_say("Re-record episode", cfg.play_sounds)
-            events["rerecord_episode"] = False
-            events["exit_early"] = False
-            dataset.clear_episode_buffer()
-            continue
-
-        dataset.save_episode()
-        recorded_episodes += 1
-
-        if events["stop_recording"]:
-            break
-
-    log_say("Stop recording", cfg.play_sounds, blocking=True)
-    stop_recording(robot, listener, cfg.display_data)
-
-    if cfg.push_to_hub:
-        dataset.push_to_hub(tags=cfg.tags, private=cfg.private)
-
-    log_say("Exiting", cfg.play_sounds)
-    return dataset
 
 @dataclass
 class Config_dummy():
@@ -322,14 +261,12 @@ def control_robot(
         )
     )
     cfg.control.policy.pretrained_path = '/home/achapin/hackathon/lerobot_jds/backend/src/features/guess_who/checkpoints/050000_full/pretrained_model'
-    init_logging()
-    logging.info(pformat(asdict(cfg)))
 
     robot = make_robot_from_config(cfg.robot)
     record(robot, cfg.control, row_col=row_col)
 
-    if robot.is_connected:
-        robot.disconnect()
+    # if robot.is_connected:
+    #     robot.disconnect()
 
 
 def robot_move_grid(row: int, col: int):

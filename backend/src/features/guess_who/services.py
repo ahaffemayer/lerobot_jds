@@ -7,11 +7,18 @@ import ast
 from typing import List, Tuple
 import json
 from fastapi import HTTPException
+import random
 
 # --- Mistral Client Setup ---
 # Make sure to install the library: pip install mistralai
 from .control_atomic import robot_move_grid
 from mistralai import Mistral
+
+from pydantic import BaseModel
+
+class Response(BaseModel):
+    resonning: str
+    question: str
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +81,54 @@ def _extract_list(text: str) -> list[str]:
         logger.error(f"Unexpected error extracting list: {e} from text: {text}")
         return []
 
+async def _llm_queryV2(prompt: str) -> str:
+    """Sends a prompt to the Mistral API using the client."""
+    if not mistral_client:
+        # Translated log message
+        logger.error("Mistral client is not available.")
+        # Translated detail message
+        raise HTTPException(status_code=503, detail="LLM service is unavailable.")
+
+    try:
+        # Mistral client's chat method might be synchronous.
+        # Run it in a thread pool executor to avoid blocking the async event loop.
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,  # Use default executor
+            lambda: mistral_client.chat.parse(
+                model=MODEL_NAME,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=1.0,
+                random_seed=random.randint(0, 2**32-1),  # Random seed for reproducibility
+                response_format= Response,
+                top_p=0.9,
+            )
+        )
+        print("couuuuuuuuccccooouuuuuuuuuu")
+        logger.info(f"##########{response}######")  # Debugging line to see the raw response
+        # Check if response is valid and has choices
+        if response and response.choices:
+            content = response.choices[0].message.parsed.question.strip()
+            # Translated log message
+            logger.debug(f"LLM Query successful. Prompt: '{prompt[:50]}...', Response: '{content[:50]}...'")
+            return content
+        else:
+            # Translated log message
+            logger.error(f"Invalid response received from Mistral API: {response}")
+            # Translated detail message
+            raise HTTPException(status_code=502, detail="Invalid response from LLM service.")
+
+    except Exception as e:
+        # Translated log message
+        logger.exception(f"Error querying Mistral API: {e}")
+        # Re-raise HTTPException if it came from the client, otherwise wrap
+        if isinstance(e, HTTPException):
+            raise e
+        else:
+            # Translated detail message
+            raise HTTPException(status_code=500, detail=f"Error communicating with LLM: {type(e).__name__}")
+
+
 async def _llm_query(prompt: str) -> str:
     """Sends a prompt to the Mistral API using the client."""
     if not mistral_client:
@@ -90,9 +145,12 @@ async def _llm_query(prompt: str) -> str:
             None,  # Use default executor
             lambda: mistral_client.chat.complete(
                 model=MODEL_NAME,
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
+                temperature=1.0,
+                random_seed=random.randint(0, 2**32-1),  # Random seed for reproducibility
             )
         )
+        print("couuuuuuuuccccooouuuuuuuuuu")
         logger.info(f"##########{response}######")  # Debugging line to see the raw response
         # Check if response is valid and has choices
         if response and response.choices:
@@ -301,18 +359,31 @@ async def generate_ai_question(current_list: List[str], previous_questions: List
         if previous_questions else ""
     )
 
+    #prompt = f"""
+    #You are playing the game "Guess Who?". You need to guess your opponent's secret animal.
+    #Your current list of possible animals for the opponent is: {current_list}.
+    #{previous_block}
+    #Generate a single, effective yes/no question that will help you eliminate the most possibilities from this list.
+    #Focus on common distinguishing features.
+    #Avoid questions that have already been asked or that are specific to only one animal unless few options remain.
+    #Respond ONLY with the question itself, and nothing else.
+    #"""
     prompt = f"""
-    You are playing the game "Guess Who?". You need to guess your opponent's secret animal.
+    You need to guess your opponent's secret animal.
     Your current list of possible animals for the opponent is: {current_list}.
     {previous_block}
-    Generate a single, effective yes/no question that will help you eliminate the most possibilities from this list.
-    Focus on common distinguishing features.
-    Avoid questions that have already been asked or that are specific to only one animal unless few options remain.
+    Generate a single, effective yes/no question that will eliminate the minimum number of animals from this list.
+    Avoid questions that have already been asked.
     Respond ONLY with the question itself, and nothing else.
+    Please think about five questions before deciding the final question in english.
+    You must response in json format with two keys:
+    1. Reasonning: A string explaining briefly why the other characters were removed.
+    2. Question: The final question.
+    Do not include any text before or after the JSON object.
     """
     try:
         # Use the existing LLM query helper
-        generated_question = await _llm_query(prompt)
+        generated_question = await _llm_queryV2(prompt)
 
         # Basic cleaning (remove potential quotes or extra phrases if LLM doesn't follow instructions perfectly)
         cleaned_question = generated_question.strip().strip('"')

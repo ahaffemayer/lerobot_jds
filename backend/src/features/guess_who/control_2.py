@@ -10,14 +10,22 @@ import rerun as rr
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.control_configs import (
+    ControlConfig,
     RecordControlConfig,
+    RemoteRobotConfig,
     TeleoperateControlConfig,
+    ControlPipelineConfig,
 )
 from lerobot.common.robot_devices.control_utils import (
     control_loop,
+    init_keyboard_listener,
+    is_headless,
+    reset_environment,
     sanity_check_dataset_name,
+    stop_recording,
     warmup_record,
     predict_action,
+    log_control_info
 )
 from lerobot.common.robot_devices.robots.configs import (
     FeetechMotorsBusConfig,
@@ -26,16 +34,18 @@ from lerobot.common.robot_devices.robots.configs import (
 )
 from lerobot.common.robot_devices.robots.configs import So100RobotConfig
 from lerobot.common.robot_devices.utils import busy_wait
-from lerobot.common.utils.utils import get_safe_torch_device
+from lerobot.common.utils.utils import get_safe_torch_device, has_method
 from lerobot.common.robot_devices.robots.utils import Robot, make_robot_from_config
 from lerobot.common.robot_devices.utils import safe_disconnect
+from lerobot.common.utils.utils import has_method, init_logging, log_say
+from lerobot.configs import parser
 from lerobot.common.policies.act.configuration_act import (
     ACTConfig,
     NormalizationMode,
 )
 from lerobot.configs.types import PolicyFeature, FeatureType
+import subprocess
 
-import shutil
 import torch
 
 
@@ -45,6 +55,7 @@ import torch
 
 NUM_COLS = 8
 NUM_ROWS = 3
+
 @safe_disconnect
 def teleoperate(robot: Robot, cfg: TeleoperateControlConfig):
     control_loop(
@@ -65,10 +76,8 @@ class Config:
 def record(
     robot: Robot,
     cfg: RecordControlConfig,
-    index:int,
     row_col: tuple[int, int] = None,
 ) -> LeRobotDataset:
-    cfg.repo_id = cfg.repo_id + "_" + str(index)
     # Create empty dataset or load existing saved episodes
     sanity_check_dataset_name(cfg.repo_id, cfg.policy)
     dataset = LeRobotDataset.create(
@@ -82,55 +91,118 @@ def record(
     )
 
     # Load pretrained policy
+    print(f"cfg policy: {cfg.policy}")
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
+    listener,events = init_keyboard_listener()
     if not robot.is_connected:
         robot.connect()
-    # robot.send_action(torch.tensor([0, 135, 135, 4, -90, 3]))
+    robot.send_action(torch.tensor([0, 135, 135, 4, -90, 3]))
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
-    warmup_record(robot, None, enable_teleoperation, cfg.warmup_time_s, cfg.display_data, cfg.fps)
+    warmup_record(robot, events, enable_teleoperation, cfg.warmup_time_s, cfg.display_data, cfg.fps)
 
+    if has_method(robot, "teleop_safety_stop"):
+        robot.teleop_safety_stop()
+
+
+    recorded_episodes = 0
     control_time_s = cfg.episode_time_s
-    #while True:
-    current_grid = torch.tensor(row_col, dtype=torch.float)
-    if not robot.is_connected:
-        robot.connect()
-
-    if control_time_s is None:
-        control_time_s = float("inf")
-
-    if dataset is not None and cfg.fps is not None and dataset.fps != cfg.fps:
-        raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {cfg.fps}).")
-    
-    timestamp = 0
-    start_episode_t = time.perf_counter()
-    while timestamp < control_time_s:
-        start_loop_t = time.perf_counter()
+    while True:
+        if recorded_episodes >= cfg.num_episodes:
+            break
         
-        observation = robot.capture_observation()
-        observation["grid_position"] = current_grid
-        if policy is not None:
-            pred_action = predict_action(
-                observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
-            )
-            # Action can eventually be clipped using `max_relative_target`,
-            # so action actually sent is saved in the dataset.
-            action = robot.send_action(pred_action)
-            action = {"action": action}
+        current_grid = torch.tensor(row_col, dtype=torch.float)
 
-        if cfg.fps is not None:
+        log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+        if not robot.is_connected:
+            robot.connect()
+
+        if events is None:
+            events = {"exit_early": False}
+
+        if control_time_s is None:
+            control_time_s = float("inf")
+
+        if dataset is not None and cfg.single_task is None:
+            raise ValueError("You need to provide a task as argument in `single_task`.")
+
+        if dataset is not None and cfg.fps is not None and dataset.fps != cfg.fps:
+            raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {cfg.fps}).")
+        
+        timestamp = 0
+        start_episode_t = time.perf_counter()
+        while timestamp < control_time_s:
+            start_loop_t = time.perf_counter()
+            
+            observation = robot.capture_observation()
+            observation["grid_position"] = current_grid
+
+            if policy is not None:
+                pred_action = predict_action(
+                    observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+                )
+                # Action can eventually be clipped using `max_relative_target`,
+                # so action actually sent is saved in the dataset.
+                action = robot.send_action(pred_action)
+                action = {"action": action}
+
+            if dataset is not None:
+                frame = {**observation, **action, "task": cfg.single_task, "grid_position": current_grid}
+                dataset.add_frame(frame)
+
+            if (cfg.display_data and not is_headless()):
+                for k, v in action.items():
+                    for i, vv in enumerate(v):
+                        rr.log(f"sent_{k}_{i}", rr.Scalar(vv.numpy()))
+
+                image_keys = [key for key in observation if "image" in key]
+                for key in image_keys:
+                    rr.log(key, rr.Image(observation[key].numpy()), static=True)
+
+            if cfg.fps is not None:
+                dt_s = time.perf_counter() - start_loop_t
+                busy_wait(1 / cfg.fps - dt_s)
+
             dt_s = time.perf_counter() - start_loop_t
-            busy_wait(1 / cfg.fps - dt_s)
+            log_control_info(robot, dt_s, fps=cfg.fps)
 
-        dt_s = time.perf_counter() - start_loop_t
-        timestamp = time.perf_counter() - start_episode_t
-    print("Finished recording trajectory")
+            timestamp = time.perf_counter() - start_episode_t
+            if events["exit_early"]:
+                events["exit_early"] = False
+                break
 
+        if not events["stop_recording"] and (
+            (recorded_episodes < cfg.num_episodes - 1) or events["rerecord_episode"]
+        ):
+            log_say("Reset the environment", cfg.play_sounds)
+            reset_environment(robot, events, cfg.reset_time_s, cfg.fps)
+
+        if events["rerecord_episode"]:
+            log_say("Re-record episode", cfg.play_sounds)
+            events["rerecord_episode"] = False
+            events["exit_early"] = False
+            dataset.clear_episode_buffer()
+            continue
+
+        dataset.save_episode()
+        recorded_episodes += 1
+
+        if events["stop_recording"]:
+            break
+
+    log_say("Stop recording", cfg.play_sounds, blocking=True)
+    stop_recording(robot, listener, cfg.display_data)
+
+    if cfg.push_to_hub:
+        dataset.push_to_hub(tags=cfg.tags, private=cfg.private)
+
+    log_say("Exiting", cfg.play_sounds)
+    return dataset
 
 @dataclass
 class Config_dummy():
@@ -141,7 +213,6 @@ class Config_dummy():
 def control_robot(
     # cfg: ControlPipelineConfig,
     row_col: tuple[int, int],
-    index: int,
 ):
 
     cfg = Config_dummy(
@@ -192,7 +263,7 @@ def control_robot(
             calibration_dir='/home/achapin/hackathon/lerobot_jds/backend/lerobot/.cache/calibration/so100'
         ), 
         control=RecordControlConfig(
-            repo_id='lirislab/eval_act_guess_who_FULL',
+            repo_id='lirislab/eval_act_guess_who_33',
             single_task='',
             collect_grid=True,
             root=None,
@@ -238,8 +309,8 @@ def control_robot(
             ),
             fps=30,
             warmup_time_s=5,
-            episode_time_s=12,
-            reset_time_s=8,
+            episode_time_s=30,
+            reset_time_s=10,
             num_episodes=1,
             video=True,
             push_to_hub=False,
@@ -252,13 +323,15 @@ def control_robot(
             resume=False
         )
     )
-    cfg.control.policy.pretrained_path = '/home/achapin/hackathon/lerobot_jds/backend/src/features/guess_who/checkpoints/100000_full_light/pretrained_model'
+    cfg.control.policy.pretrained_path = '/home/achapin/hackathon/lerobot_jds/backend/src/features/guess_who/checkpoints/050000_full/pretrained_model'
+    init_logging()
+    logging.info(pformat(asdict(cfg)))
 
     robot = make_robot_from_config(cfg.robot)
-    record(robot, cfg.control, row_col=row_col, index=index)
+    record(robot, cfg.control, row_col=row_col)
 
-    # if robot.is_connected:
-    #     robot.disconnect()
+    if robot.is_connected:
+        robot.disconnect()
 
 
 def robot_move_grid(row: int, col: int):
@@ -269,12 +342,9 @@ def robot_move_grid(row: int, col: int):
         row (int): The row index of the grid.
         col (int): The column index of the grid.
     """
-    index = row * NUM_COLS + col
-    control_robot(row_col=[row, col], index=index)
+    control_robot(row_col=[row, col])
 
 if __name__ == "__main__":
-   index = 0
    for (i, j) in [(1,6)]:
             print(f"Moving to grid position: ({i}, {j})")
-            control_robot(row_col=[i, j], index=index)
-            index += 1
+            control_robot(row_col=[i, j])

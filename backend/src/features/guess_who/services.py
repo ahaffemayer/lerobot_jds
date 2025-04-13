@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 # --- Mistral Client Setup ---
 # Make sure to install the library: pip install mistralai
+from control_atomic import robot_move_grid
 from mistralai import Mistral
 
 logger = logging.getLogger(__name__)
@@ -222,6 +223,15 @@ Example JSON Response:
             # Extract data, providing defaults if keys are missing
             kept_animals = parsed_json.get('kept_characters', [])
             reasoning = parsed_json.get('reasoning', 'No reasoning provided in JSON.')
+
+            for animal in kept_animals:
+                print(f"Kept animal: {animal}")  # Debugging line to see kept animals
+                if animal in ANIMAL_COORDS.keys():
+                    print(f"Animal {animal} found in ANIMAL_COORDS.")
+                    coord = ANIMAL_COORDS[animal]
+                    print(f"Coordinates for {animal}: {coord}")
+                    robot_move_grid(coord[0], coord[1])  # Assuming robot_move_grid is defined elsewhere
+
 
             # Validate extracted data types (optional but recommended)
             if not isinstance(kept_animals, list) or not all(isinstance(item, str) for item in kept_animals):
